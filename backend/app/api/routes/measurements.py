@@ -5,9 +5,11 @@ from app.core.config import settings
 from app.schemas.measurements import (
     BulkCreateResult,
     DevicePowerBulkCreate,
-    MeasurementUpdate,
+    DevicePowerMeasurementUpdate,
     PhaseMainMeasurementBulkCreate,
+    PhaseMainMeasurementUpdate,
     RackMeasurementBulkCreate,
+    RackMeasurementUpdate,
 )
 from app.services import measurements as measurement_service
 
@@ -46,12 +48,11 @@ async def create_phase_main_measurements_bulk(
 @router.patch("/rack-measurements/{measurement_id}")
 async def update_rack_measurement(
     measurement_id: int,
-    payload: MeasurementUpdate,
+    payload: RackMeasurementUpdate,
     session: DbSession,
 ) -> dict[str, object]:
-    return await measurement_service.update_measurement(
+    return await measurement_service.update_rack_measurement(
         session,
-        measurement_type="rack",
         measurement_id=measurement_id,
         payload=payload,
     )
@@ -69,12 +70,11 @@ async def delete_rack_measurement(measurement_id: int, session: DbSession) -> No
 @router.patch("/device-power-measurements/{measurement_id}")
 async def update_device_power_measurement(
     measurement_id: int,
-    payload: MeasurementUpdate,
+    payload: DevicePowerMeasurementUpdate,
     session: DbSession,
 ) -> dict[str, object]:
-    return await measurement_service.update_measurement(
+    return await measurement_service.update_device_power_measurement(
         session,
-        measurement_type="device-power",
         measurement_id=measurement_id,
         payload=payload,
     )
@@ -92,12 +92,11 @@ async def delete_device_power_measurement(measurement_id: int, session: DbSessio
 @router.patch("/phase-main-measurements/{measurement_id}")
 async def update_phase_main_measurement(
     measurement_id: int,
-    payload: MeasurementUpdate,
+    payload: PhaseMainMeasurementUpdate,
     session: DbSession,
 ) -> dict[str, object]:
-    return await measurement_service.update_measurement(
+    return await measurement_service.update_phase_main_measurement(
         session,
-        measurement_type="phase-main",
         measurement_id=measurement_id,
         payload=payload,
     )

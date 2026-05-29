@@ -10,10 +10,12 @@ from app.core.errors import ValidationAppError
 from app.repositories import measurements as measurement_repo
 from app.schemas.measurements import (
     DevicePowerBulkCreate,
+    DevicePowerMeasurementUpdate,
     MeasurementBatchCreate,
-    MeasurementUpdate,
     PhaseMainMeasurementBulkCreate,
+    PhaseMainMeasurementUpdate,
     RackMeasurementBulkCreate,
+    RackMeasurementUpdate,
 )
 from app.services.power_calculations import calculate_single_phase_watts, validate_watts_tolerance
 
@@ -254,50 +256,101 @@ async def create_phase_main_measurements_bulk(
     return {"created_ids": created_ids, "warnings": []}
 
 
-async def update_measurement(
+async def update_rack_measurement(
     session: AsyncSession,
     *,
-    measurement_type: str,
     measurement_id: int,
-    payload: MeasurementUpdate,
+    payload: RackMeasurementUpdate,
 ) -> dict[str, object]:
-    current = await measurement_repo.get_measurement(session, measurement_type, measurement_id)
+    current = await measurement_repo.get_measurement(session, "rack", measurement_id)
     values = payload.model_dump(exclude_unset=True, exclude={"confirmed"})
     merged = {**current, **values}
 
-    if measurement_type in {"rack", "device-power"}:
-        watts, quality, _warning = derive_watts_and_quality(
-            watts=merged.get("watts"),
-            voltage=merged.get("voltage"),
-            amp=merged.get("amp"),
-            power_factor=merged.get("power_factor"),
-            voltage_source=merged.get("voltage_source") or "default",
-            power_factor_source=merged.get("power_factor_source") or "default",
-            value_type=merged.get("value_type"),
-            confirmed=payload.confirmed,
-        )
-        values["watts"] = watts
-        values["quality"] = quality
-
-    if measurement_type == "phase-main":
-        amp = merged.get("amp")
-        voltage = merged.get("voltage_default_used")
-        power_factor = merged.get("power_factor_default_used")
-        if (
-            isinstance(amp, Decimal)
-            and isinstance(voltage, Decimal)
-            and isinstance(power_factor, Decimal)
-        ):
-            values["calculated_watts"] = calculate_single_phase_watts(
-                voltage=voltage,
-                amp=amp,
-                power_factor=power_factor,
-            )
+    watts, quality, _warning = derive_watts_and_quality(
+        watts=merged.get("watts"),
+        voltage=merged.get("voltage"),
+        amp=merged.get("amp"),
+        power_factor=merged.get("power_factor"),
+        voltage_source=merged.get("voltage_source") or "default",
+        power_factor_source=merged.get("power_factor_source") or "default",
+        confirmed=payload.confirmed,
+    )
+    values["watts"] = watts
+    values["quality"] = quality
 
     values["updated_at"] = _now_utc()
     row = await measurement_repo.update_measurement(
         session,
-        measurement_type,
+        "rack",
+        measurement_id,
+        values,
+    )
+    await session.commit()
+    return row
+
+
+async def update_device_power_measurement(
+    session: AsyncSession,
+    *,
+    measurement_id: int,
+    payload: DevicePowerMeasurementUpdate,
+) -> dict[str, object]:
+    current = await measurement_repo.get_measurement(session, "device-power", measurement_id)
+    values = payload.model_dump(exclude_unset=True, exclude={"confirmed"})
+    merged = {**current, **values}
+
+    watts, quality, _warning = derive_watts_and_quality(
+        watts=merged.get("watts"),
+        voltage=merged.get("voltage"),
+        amp=merged.get("amp"),
+        power_factor=merged.get("power_factor"),
+        voltage_source=merged.get("voltage_source") or "default",
+        power_factor_source=merged.get("power_factor_source") or "default",
+        value_type=merged.get("value_type"),
+        confirmed=payload.confirmed,
+    )
+    values["watts"] = watts
+    values["quality"] = quality
+    values["updated_at"] = _now_utc()
+    row = await measurement_repo.update_measurement(
+        session,
+        "device-power",
+        measurement_id,
+        values,
+    )
+    await session.commit()
+    return row
+
+
+async def update_phase_main_measurement(
+    session: AsyncSession,
+    *,
+    measurement_id: int,
+    payload: PhaseMainMeasurementUpdate,
+) -> dict[str, object]:
+    current = await measurement_repo.get_measurement(session, "phase-main", measurement_id)
+    values = payload.model_dump(exclude_unset=True)
+    merged = {**current, **values}
+    amp = merged.get("amp")
+    voltage = merged.get("voltage_default_used")
+    power_factor = merged.get("power_factor_default_used")
+    if not (
+        isinstance(amp, Decimal)
+        and isinstance(voltage, Decimal)
+        and isinstance(power_factor, Decimal)
+    ):
+        raise ValidationAppError("phase-main measurement cannot be recalculated")
+
+    values["calculated_watts"] = calculate_single_phase_watts(
+        voltage=voltage,
+        amp=amp,
+        power_factor=power_factor,
+    )
+    values["quality"] = "calculated_with_default_pf"
+    values["updated_at"] = _now_utc()
+    row = await measurement_repo.update_measurement(
+        session,
+        "phase-main",
         measurement_id,
         values,
     )

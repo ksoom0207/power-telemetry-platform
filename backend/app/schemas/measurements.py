@@ -1,17 +1,21 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class MeasurementBatchCreate(BaseModel):
+class StrictBaseModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class MeasurementBatchCreate(StrictBaseModel):
     client_batch_id: str | None = None
     operator_name: str = Field(min_length=1)
     measured_at: datetime
     note: str | None = None
 
 
-class MeasurementBatchRead(BaseModel):
+class MeasurementBatchRead(StrictBaseModel):
     id: int
     client_batch_id: str
     operator_name: str
@@ -20,7 +24,7 @@ class MeasurementBatchRead(BaseModel):
     source: str
 
 
-class RackMeasurementCreate(BaseModel):
+class RackMeasurementCreate(StrictBaseModel):
     rack_id: int
     measurement_point: str = "rack_input"
     watts: Decimal | None = None
@@ -33,12 +37,12 @@ class RackMeasurementCreate(BaseModel):
     confirmed: bool = False
 
 
-class RackMeasurementBulkCreate(BaseModel):
+class RackMeasurementBulkCreate(StrictBaseModel):
     batch_id: int
     rows: list[RackMeasurementCreate]
 
 
-class DevicePowerCreate(BaseModel):
+class DevicePowerCreate(StrictBaseModel):
     device_id: int
     measurement_point: str = "device_power_cord"
     value_type: str
@@ -52,24 +56,24 @@ class DevicePowerCreate(BaseModel):
     confirmed: bool = False
 
 
-class DevicePowerBulkCreate(BaseModel):
+class DevicePowerBulkCreate(StrictBaseModel):
     batch_id: int
     rows: list[DevicePowerCreate]
 
 
-class PhaseMainMeasurementCreate(BaseModel):
+class PhaseMainMeasurementCreate(StrictBaseModel):
     phase: str
     measurement_point: str = "phase_branch"
     amp: Decimal
     note: str | None = None
 
 
-class PhaseMainMeasurementBulkCreate(BaseModel):
+class PhaseMainMeasurementBulkCreate(StrictBaseModel):
     batch_id: int
     rows: list[PhaseMainMeasurementCreate]
 
 
-class MeasurementUpdate(BaseModel):
+class RackMeasurementUpdate(StrictBaseModel):
     watts: Decimal | None = None
     voltage: Decimal | None = None
     amp: Decimal | None = None
@@ -80,6 +84,17 @@ class MeasurementUpdate(BaseModel):
     confirmed: bool = False
 
 
-class BulkCreateResult(BaseModel):
+class DevicePowerMeasurementUpdate(RackMeasurementUpdate):
+    value_type: str | None = None
+
+
+class PhaseMainMeasurementUpdate(StrictBaseModel):
+    phase: str | None = None
+    measurement_point: str | None = None
+    amp: Decimal | None = None
+    note: str | None = None
+
+
+class BulkCreateResult(StrictBaseModel):
     created_ids: list[int]
     warnings: list[dict[str, object]]

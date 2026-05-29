@@ -1,8 +1,10 @@
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.errors import ValidationAppError
+from app.schemas.measurements import PhaseMainMeasurementUpdate, RackMeasurementUpdate
 from app.services.measurements import derive_watts_and_quality
 from app.services.power_calculations import calculate_single_phase_watts, validate_watts_tolerance
 
@@ -134,3 +136,28 @@ def test_derive_watts_and_quality_preserves_estimated_and_rated_quality() -> Non
 
     assert estimated == (Decimal("700"), "estimated", None)
     assert rated == (Decimal("900"), "rated", None)
+
+
+def test_phase_main_update_schema_allows_only_phase_main_fields() -> None:
+    payload = PhaseMainMeasurementUpdate(
+        phase="R",
+        measurement_point="phase_branch",
+        amp=Decimal("80"),
+        note="main branch measurement",
+    )
+
+    assert payload.amp == Decimal("80")
+
+
+def test_phase_main_update_schema_rejects_rack_device_power_fields() -> None:
+    with pytest.raises(ValidationError):
+        PhaseMainMeasurementUpdate(
+            amp=Decimal("80"),
+            watts=Decimal("1000"),
+            power_factor=Decimal("0.95"),
+        )
+
+
+def test_rack_update_schema_rejects_phase_field() -> None:
+    with pytest.raises(ValidationError):
+        RackMeasurementUpdate(phase="R", amp=Decimal("10"))

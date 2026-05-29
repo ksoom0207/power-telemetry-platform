@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 WATT_DISPLAY_QUANT = Decimal("0.1")
 KWH_DISPLAY_QUANT = Decimal("0.001")

@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -62,7 +63,7 @@ class DevicePowerBulkCreate(StrictBaseModel):
 
 
 class PhaseMainMeasurementCreate(StrictBaseModel):
-    phase: str
+    phase: Literal["R", "S", "T"]
     measurement_point: str = "phase_branch"
     amp: Decimal
     note: str | None = None
@@ -89,7 +90,7 @@ class DevicePowerMeasurementUpdate(RackMeasurementUpdate):
 
 
 class PhaseMainMeasurementUpdate(StrictBaseModel):
-    phase: str | None = None
+    phase: Literal["R", "S", "T"] | None = None
     measurement_point: str | None = None
     amp: Decimal | None = None
     note: str | None = None
@@ -97,4 +98,9 @@ class PhaseMainMeasurementUpdate(StrictBaseModel):
 
 class BulkCreateResult(StrictBaseModel):
     created_ids: list[int]
+    warnings: list[dict[str, object]]
+
+
+class MeasurementUpdateResult(StrictBaseModel):
+    row: dict[str, object]
     warnings: list[dict[str, object]]

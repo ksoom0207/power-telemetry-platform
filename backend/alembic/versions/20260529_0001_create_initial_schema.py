@@ -7,8 +7,9 @@ Create Date: 2026-05-29 00:00:00
 """
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision: str = "20260529_0001"
 down_revision: str | Sequence[str] | None = None
@@ -259,6 +260,7 @@ def upgrade() -> None:
         sa.Column("operator_name", sa.String(length=255), nullable=False),
         sa.Column("note", sa.String(length=1000), nullable=True),
         *timestamps(),
+        sa.CheckConstraint("phase IN ('R', 'S', 'T')", name="ck_phase_main_phase"),
         sa.ForeignKeyConstraint(["batch_id"], ["measurement_batches.id"]),
         sa.PrimaryKeyConstraint("id"),
     )

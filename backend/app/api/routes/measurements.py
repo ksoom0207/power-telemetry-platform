@@ -6,6 +6,7 @@ from app.schemas.measurements import (
     BulkCreateResult,
     DevicePowerBulkCreate,
     DevicePowerMeasurementUpdate,
+    MeasurementUpdateResult,
     PhaseMainMeasurementBulkCreate,
     PhaseMainMeasurementUpdate,
     RackMeasurementBulkCreate,
@@ -45,7 +46,7 @@ async def create_phase_main_measurements_bulk(
     )
 
 
-@router.patch("/rack-measurements/{measurement_id}")
+@router.patch("/rack-measurements/{measurement_id}", response_model=MeasurementUpdateResult)
 async def update_rack_measurement(
     measurement_id: int,
     payload: RackMeasurementUpdate,
@@ -67,7 +68,7 @@ async def delete_rack_measurement(measurement_id: int, session: DbSession) -> No
     )
 
 
-@router.patch("/device-power-measurements/{measurement_id}")
+@router.patch("/device-power-measurements/{measurement_id}", response_model=MeasurementUpdateResult)
 async def update_device_power_measurement(
     measurement_id: int,
     payload: DevicePowerMeasurementUpdate,

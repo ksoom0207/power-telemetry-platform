@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -77,6 +77,7 @@ class ManualDevicePower(TimestampMixin, Base):
 
 class PhaseMainMeasurement(TimestampMixin, Base):
     __tablename__ = "phase_main_measurements"
+    __table_args__ = (CheckConstraint("phase IN ('R', 'S', 'T')", name="ck_phase_main_phase"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("measurement_batches.id"), nullable=False)

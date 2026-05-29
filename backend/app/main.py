@@ -1,13 +1,16 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.routes import measurement_batches, measurements
+from app.api.routes import devices, measurement_batches, measurements, racks, settings
 from app.core.errors import AppError
 
 app = FastAPI(title="Power Monitoring API")
 
 app.include_router(measurement_batches.router)
 app.include_router(measurements.router)
+app.include_router(racks.router)
+app.include_router(devices.router)
+app.include_router(settings.router)
 
 
 @app.exception_handler(AppError)

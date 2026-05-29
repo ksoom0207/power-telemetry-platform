@@ -36,6 +36,7 @@ def derive_watts_and_quality(
     confirmed: bool = False,
 ) -> tuple[Decimal, str, dict[str, object] | None]:
     warning: dict[str, object] | None = None
+    entered_watts = watts is not None
 
     if watts is None and None not in (voltage, amp, power_factor):
         watts = calculate_single_phase_watts(
@@ -68,10 +69,10 @@ def derive_watts_and_quality(
             if not confirmed:
                 raise ValidationAppError("watts tolerance exceeded", warning)
 
+    if entered_watts:
+        return watts, "measured_watts", warning
     if power_factor_source == "default":
         return watts, "calculated_with_default_pf", warning
-    if amp is None:
-        return watts, "measured_watts", warning
     return watts, "calculated_with_measured_pf", warning
 
 

@@ -52,17 +52,32 @@ def test_derive_watts_and_quality_calculates_with_default_pf() -> None:
     assert warning is None
 
 
-def test_derive_watts_and_quality_marks_direct_watts_as_measured() -> None:
+def test_derive_watts_and_quality_marks_watts_only_input_as_measured() -> None:
     watts, quality, warning = derive_watts_and_quality(
         watts=Decimal("500"),
         voltage=None,
         amp=None,
         power_factor=None,
-        voltage_source="meter",
-        power_factor_source="meter",
+        voltage_source="default",
+        power_factor_source="default",
     )
 
     assert watts == Decimal("500")
+    assert quality == "measured_watts"
+    assert warning is None
+
+
+def test_derive_watts_and_quality_keeps_entered_watts_as_measured_when_cross_checked() -> None:
+    watts, quality, warning = derive_watts_and_quality(
+        watts=Decimal("2100"),
+        voltage=Decimal("220"),
+        amp=Decimal("10"),
+        power_factor=Decimal("0.95"),
+        voltage_source="default",
+        power_factor_source="default",
+    )
+
+    assert watts == Decimal("2100")
     assert quality == "measured_watts"
     assert warning is None
 
@@ -92,7 +107,7 @@ def test_derive_watts_and_quality_returns_warning_when_confirmed() -> None:
     )
 
     assert watts == Decimal("3000")
-    assert quality == "calculated_with_measured_pf"
+    assert quality == "measured_watts"
     assert warning is not None
     assert warning["code"] == "WATTS_TOLERANCE_EXCEEDED"
 

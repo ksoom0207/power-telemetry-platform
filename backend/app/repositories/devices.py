@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationAppError
@@ -22,6 +22,23 @@ async def list_devices(
         statement = statement.where(Device.active.is_(True))
     if rack_id is not None:
         statement = statement.where(Device.rack_id == rack_id)
+    result = await session.execute(statement)
+    return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+async def list_ilo_collection_targets(session: AsyncSession) -> list[dict[str, Any]]:
+    statement = (
+        select(Device)
+        .where(
+            Device.active.is_(True),
+            Device.has_ilo.is_(True),
+            Device.ilo_host.is_not(None),
+            Device.ilo_profile.is_not(None),
+            func.length(func.trim(Device.ilo_host)) > 0,
+            func.length(func.trim(Device.ilo_profile)) > 0,
+        )
+        .order_by(Device.name)
+    )
     result = await session.execute(statement)
     return [_row_to_dict(row) for row in result.scalars().all()]
 

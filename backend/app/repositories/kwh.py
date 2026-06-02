@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Select, select, update
@@ -128,7 +128,7 @@ async def clear_month_recalculation(
     await session.execute(
         update(RackMonthlyKwh)
         .where(RackMonthlyKwh.rack_id == rack_id, RackMonthlyKwh.month == month)
-        .values(needs_recalculation=False)
+        .values(needs_recalculation=False, updated_at=datetime.now(tz=UTC))
     )
 
 

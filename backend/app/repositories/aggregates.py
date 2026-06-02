@@ -81,6 +81,33 @@ async def list_power_aggregates(
     return [_row_to_dict(row) for row in result.scalars().all()]
 
 
+async def list_rack_hourly_power_aggregates(
+    session: AsyncSession,
+    *,
+    period_start_from: datetime,
+    period_start_to: datetime,
+    rack_id: int | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    statement: Select[tuple[PowerAggregate]] = (
+        select(PowerAggregate)
+        .where(PowerAggregate.entity_type == "rack")
+        .where(PowerAggregate.period == "hour")
+        .where(PowerAggregate.period_start >= period_start_from)
+        .where(PowerAggregate.period_start < period_start_to)
+    )
+    if rack_id is not None:
+        statement = statement.where(PowerAggregate.entity_id == rack_id)
+    statement = statement.order_by(
+        PowerAggregate.entity_id.asc(),
+        PowerAggregate.period_start.asc(),
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    result = await session.execute(statement)
+    return [_row_to_dict(row) for row in result.scalars().all()]
+
+
 async def list_latest_power_aggregates(
     session: AsyncSession,
     *,

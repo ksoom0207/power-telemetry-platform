@@ -1,7 +1,17 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.services.kwh import HourlyPowerPoint, build_hourly_kwh
+import pytest
+
+from app.core.errors import ValidationAppError
+from app.services.kwh import (
+    HourlyPowerPoint,
+    build_hourly_kwh,
+    count_hours,
+    floor_to_hour,
+    month_start,
+    next_month_start,
+)
 
 
 def test_build_hourly_kwh_splits_actual_and_estimated() -> None:
@@ -86,3 +96,45 @@ def test_build_hourly_kwh_rejects_naive_power_point() -> None:
         assert "timezone-aware" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_floor_to_hour_rejects_naive_datetime() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        floor_to_hour(datetime(2026, 5, 1, 12, 34, 56))
+
+
+def test_floor_to_hour_removes_minutes_seconds_and_microseconds() -> None:
+    value = datetime(2026, 5, 1, 12, 34, 56, 789, tzinfo=UTC)
+
+    assert floor_to_hour(value) == datetime(2026, 5, 1, 12, tzinfo=UTC)
+
+
+def test_month_helpers_handle_year_boundary() -> None:
+    value = datetime(2026, 12, 31, 23, 59, tzinfo=UTC)
+
+    assert month_start(value) == datetime(2026, 12, 1, tzinfo=UTC)
+    assert next_month_start(month_start(value)) == datetime(2027, 1, 1, tzinfo=UTC)
+
+
+def test_count_hours_uses_half_open_range() -> None:
+    start = datetime(2026, 5, 1, 0, tzinfo=UTC)
+    end = datetime(2026, 5, 2, 0, tzinfo=UTC)
+
+    assert count_hours(start, end) == 24
+
+
+def test_count_hours_rejects_non_hour_boundaries() -> None:
+    start = datetime(2026, 5, 1, 0, 30, tzinfo=UTC)
+    end = datetime(2026, 5, 1, 2, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="hour boundaries"):
+        count_hours(start, end)
+
+
+def test_count_hours_rejects_empty_or_reversed_range() -> None:
+    start = datetime(2026, 5, 1, 0, tzinfo=UTC)
+
+    with pytest.raises(ValidationAppError, match="greater than"):
+        count_hours(start, start)
+    with pytest.raises(ValidationAppError, match="greater than"):
+        count_hours(start, start - timedelta(hours=1))

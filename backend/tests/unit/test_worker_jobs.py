@@ -4,6 +4,33 @@ from app.workers import jobs
 
 
 @pytest.mark.asyncio
+async def test_run_aggregate_job_calls_refresh_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = object()
+    called_with: list[object] = []
+    called_kwargs: list[dict[str, object]] = []
+
+    async def fake_refresh_power_aggregates(
+        received_session: object,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        called_with.append(received_session)
+        called_kwargs.append(kwargs)
+        return {"status": "success", "upserted_count": 4}
+
+    monkeypatch.setattr(
+        jobs.aggregate_service,
+        "refresh_power_aggregates",
+        fake_refresh_power_aggregates,
+    )
+
+    result = await jobs.run_aggregate_job(session)  # type: ignore[arg-type]
+
+    assert called_with == [session]
+    assert called_kwargs == [{}]
+    assert result == {"status": "success", "upserted_count": 4}
+
+
+@pytest.mark.asyncio
 async def test_run_threshold_evaluation_job_calls_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

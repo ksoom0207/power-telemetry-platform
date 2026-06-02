@@ -5,7 +5,9 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.repositories import aggregates as aggregate_repo
+from app.repositories import ilo as ilo_repo
 from app.repositories import kwh as kwh_repo
+from app.repositories import measurements as measurement_repo
 from app.repositories import thresholds as threshold_repo
 
 
@@ -95,6 +97,52 @@ def test_threshold_state_upsert_uses_threshold_id_conflict_target() -> None:
 
     assert "ON CONFLICT" in compiled
     assert "threshold_id" in compiled
+
+
+def test_latest_power_sample_query_filters_success_and_uses_latest_tiebreak() -> None:
+    statement = ilo_repo.build_latest_power_samples_by_device_statement(
+        measured_at_to=datetime(2026, 6, 2, tzinfo=UTC)
+    )
+
+    compiled = _compile(statement)
+
+    assert "ilo_power_samples.status = " in compiled
+    assert "ilo_power_samples.average_watts IS NOT NULL" in compiled
+    assert "ilo_power_samples.measured_at <= " in compiled
+    assert "PARTITION BY ilo_power_samples.device_id" in compiled
+    assert "ORDER BY ilo_power_samples.measured_at DESC, ilo_power_samples.id DESC" in compiled
+
+
+def test_latest_manual_measurement_queries_use_entity_tiebreaks() -> None:
+    measured_at_to = datetime(2026, 6, 2, tzinfo=UTC)
+
+    device = _compile(
+        measurement_repo.build_latest_manual_device_power_by_device_statement(
+            measured_at_to=measured_at_to
+        )
+    )
+    rack = _compile(
+        measurement_repo.build_latest_rack_measurements_by_rack_statement(
+            measured_at_to=measured_at_to
+        )
+    )
+    phase = _compile(
+        measurement_repo.build_latest_phase_main_measurements_by_phase_statement(
+            measured_at_to=measured_at_to
+        )
+    )
+
+    assert "PARTITION BY manual_device_powers.device_id" in device
+    assert "manual_device_powers.value_type = " in device
+    assert "manual_device_powers.quality = " in device
+    assert "ORDER BY manual_device_powers.measured_at DESC, manual_device_powers.id DESC" in device
+    assert "PARTITION BY rack_measurements.rack_id" in rack
+    assert "ORDER BY rack_measurements.measured_at DESC, rack_measurements.id DESC" in rack
+    assert "PARTITION BY phase_main_measurements.phase" in phase
+    assert (
+        "ORDER BY phase_main_measurements.measured_at DESC, phase_main_measurements.id DESC"
+        in phase
+    )
 
 
 @pytest.mark.asyncio

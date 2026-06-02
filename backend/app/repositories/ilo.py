@@ -1,8 +1,10 @@
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.datetime import ensure_aware
 from app.core.errors import ValidationAppError
 from app.models.ilo import CollectionRun, IloPowerSample
 
@@ -62,6 +64,49 @@ async def list_power_samples(
         statement.order_by(IloPowerSample.measured_at.desc()).limit(limit)
     )
     return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+def build_latest_power_samples_by_device_statement(*, measured_at_to: datetime) -> Any:
+    ensure_aware(measured_at_to)
+    ranked = (
+        select(
+            IloPowerSample.id,
+            IloPowerSample.device_id,
+            IloPowerSample.collection_run_id,
+            IloPowerSample.measured_at,
+            IloPowerSample.average_watts,
+            IloPowerSample.status,
+            IloPowerSample.auth_method_used,
+            IloPowerSample.profile_used,
+            IloPowerSample.quality,
+            func.row_number()
+            .over(
+                partition_by=IloPowerSample.device_id,
+                order_by=(IloPowerSample.measured_at.desc(), IloPowerSample.id.desc()),
+            )
+            .label("row_number"),
+        )
+        .where(IloPowerSample.status == "success")
+        .where(IloPowerSample.average_watts.is_not(None))
+        .where(IloPowerSample.measured_at <= measured_at_to)
+        .subquery()
+    )
+    return select(ranked).where(ranked.c.row_number == 1)
+
+
+async def list_latest_power_samples_by_device(
+    session: AsyncSession,
+    measured_at_to: datetime,
+) -> dict[int, dict[str, Any]]:
+    result = await session.execute(
+        build_latest_power_samples_by_device_statement(measured_at_to=measured_at_to)
+    )
+    rows: dict[int, dict[str, Any]] = {}
+    for row in result.mappings().all():
+        values = dict(row)
+        values.pop("row_number", None)
+        rows[int(values["device_id"])] = values
+    return rows
 
 
 async def list_collection_runs(session: AsyncSession, *, limit: int = 100) -> list[dict[str, Any]]:

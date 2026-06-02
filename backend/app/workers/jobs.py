@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import aggregates as aggregate_service
 from app.services import ilo_collection
 from app.services import kwh as kwh_service
 from app.services import thresholds as threshold_service
@@ -9,9 +10,8 @@ async def run_ilo_collect_job(session: AsyncSession) -> dict[str, object]:
     return await ilo_collection.collect_ilo_power(session, triggered_by="worker")
 
 
-async def run_aggregate_job(_session: AsyncSession) -> dict[str, object]:
-    # TODO(Task 7.2): calculate persisted power aggregates from representative power rows.
-    return {"status": "skipped", "reason": "aggregate calculation pending Task 7.2"}
+async def run_aggregate_job(session: AsyncSession) -> dict[str, object]:
+    return await aggregate_service.refresh_power_aggregates(session)
 
 
 async def run_kwh_job(session: AsyncSession) -> dict[str, object]:

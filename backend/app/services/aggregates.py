@@ -4,11 +4,23 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.datetime import ensure_aware
+from app.core.datetime import ensure_aware, to_utc
 from app.core.errors import ValidationAppError
 from app.repositories import aggregates as aggregate_repo
+from app.repositories import devices as device_repo
+from app.repositories import ilo as ilo_repo
+from app.repositories import measurements as measurement_repo
+from app.repositories import racks as rack_repo
 from app.schemas.aggregates import PowerAggregateUpsert
-from app.services.representative_power import RepresentativePowerResult
+from app.services.representative_power import (
+    CandidatePower,
+    DeviceRepresentativePower,
+    RepresentativePowerResult,
+    choose_device_representative,
+    resolve_overall_representative,
+    resolve_phase_representative,
+    resolve_rack_representative,
+)
 
 AGGREGATE_SOURCE_TYPES = {
     "representative",
@@ -31,6 +43,10 @@ def _with_timestamps(values: dict[str, object], *, create: bool) -> dict[str, ob
     return values
 
 
+def floor_to_hour(value: datetime) -> datetime:
+    return ensure_aware(value).replace(minute=0, second=0, microsecond=0)
+
+
 def _validate_upsert_values(values: dict[str, object]) -> None:
     if values.get("entity_id") is None:
         raise ValidationAppError("entity_id is required for power aggregate upsert")
@@ -50,6 +66,155 @@ def _source_type(source: str) -> str:
     if source not in AGGREGATE_SOURCE_TYPES:
         raise ValidationAppError(f"unsupported aggregate source_type: {source}")
     return source
+
+
+def _candidate(
+    row: dict[str, object] | None,
+    *,
+    watts_field: str,
+    quality_default: str,
+) -> CandidatePower | None:
+    if row is None:
+        return None
+    watts = row.get(watts_field)
+    measured_at = row.get("measured_at")
+    if not isinstance(watts, Decimal) or not isinstance(measured_at, datetime):
+        return None
+    return CandidatePower(
+        watts=watts,
+        measured_at=measured_at,
+        quality=str(row.get("quality") or quality_default),
+    )
+
+
+def _has_stale_device_candidate(
+    now: datetime,
+    *,
+    ilo: CandidatePower | None,
+    measured: CandidatePower | None,
+) -> bool:
+    if ilo is not None and now - ilo.measured_at > timedelta(minutes=30):
+        return True
+    if measured is not None and now - measured.measured_at > timedelta(days=30):
+        return True
+    return False
+
+
+def build_representative_power_results(
+    *,
+    now: datetime,
+    racks: list[dict[str, object]],
+    devices: list[dict[str, object]],
+    ilo_by_device: dict[int, dict[str, object]],
+    manual_device_by_device: dict[int, dict[str, object]],
+    rack_measurements_by_rack: dict[int, dict[str, object]],
+    phase_main_by_phase: dict[str, dict[str, object]],
+    phase_basis: str = "max",
+    overall_basis: str = "max",
+) -> list[RepresentativePowerResult]:
+    now = to_utc(now)
+    device_results: list[RepresentativePowerResult] = []
+    device_power_by_id: dict[int, DeviceRepresentativePower] = {}
+    for device in devices:
+        if device.get("active", True) is not True:
+            continue
+        device_id = int(device["id"])
+        ilo_candidate = _candidate(
+            ilo_by_device.get(device_id),
+            watts_field="average_watts",
+            quality_default="collected_ilo",
+        )
+        manual_candidate = _candidate(
+            manual_device_by_device.get(device_id),
+            watts_field="watts",
+            quality_default="manual_measured",
+        )
+        representative = choose_device_representative(
+            now=now,
+            ilo=ilo_candidate,
+            measured=manual_candidate,
+            estimated=None,
+            rated=None,
+        )
+        stale = representative.stale
+        if representative.watts is None:
+            stale = _has_stale_device_candidate(
+                now,
+                ilo=ilo_candidate,
+                measured=manual_candidate,
+            )
+        device_power = DeviceRepresentativePower(
+            device_id=device_id,
+            watts=representative.watts,
+            source=representative.source,
+            stale=stale,
+            active=True,
+        )
+        device_power_by_id[device_id] = device_power
+        device_results.append(
+            RepresentativePowerResult(
+                entity_type="device",
+                entity_id=device_id,
+                watts=representative.watts,
+                source=representative.source,
+                stale=stale,
+                unknown_count=1 if representative.watts is None else 0,
+                stale_count=1 if stale else 0,
+            )
+        )
+
+    devices_by_rack: dict[int, list[DeviceRepresentativePower]] = {}
+    for device in devices:
+        rack_id = int(device["rack_id"])
+        device_id = int(device["id"])
+        device_power = device_power_by_id.get(device_id)
+        if device_power is None:
+            device_power = DeviceRepresentativePower(
+                device_id=device_id,
+                watts=None,
+                source="unknown",
+                active=False,
+            )
+        devices_by_rack.setdefault(rack_id, []).append(device_power)
+
+    active_racks = [rack for rack in racks if rack.get("active", True) is True]
+    rack_results = [
+        resolve_rack_representative(
+            rack_id=int(rack["id"]),
+            phase=str(rack["phase"]),
+            rack_measurement=_candidate(
+                rack_measurements_by_rack.get(int(rack["id"])),
+                watts_field="watts",
+                quality_default="manual_measured",
+            ),
+            devices=devices_by_rack.get(int(rack["id"]), []),
+        )
+        for rack in active_racks
+    ]
+
+    phase_main = {
+        phase: _candidate(
+            phase_main_by_phase.get(phase),
+            watts_field="calculated_watts",
+            quality_default="manual_measured",
+        )
+        for phase in ("R", "S", "T")
+    }
+    phase_results = [
+        resolve_phase_representative(
+            phase=phase,
+            rack_results=rack_results,
+            phase_main=phase_main,
+            basis=phase_basis,
+        )
+        for phase in ("R", "S", "T")
+    ]
+    overall_result = resolve_overall_representative(
+        rack_results=rack_results,
+        phase_main=phase_main,
+        basis=overall_basis,
+    )
+    return [*device_results, *rack_results, *phase_results, overall_result]
 
 
 def _period_end(period: str, period_start: datetime) -> datetime:
@@ -211,3 +376,61 @@ async def list_power_aggregates(
         period_start_to=period_start_to,
         limit=limit,
     )
+
+
+async def refresh_power_aggregates(
+    session: AsyncSession,
+    now: datetime | None = None,
+    phase_basis: str = "max",
+    overall_basis: str = "max",
+) -> dict[str, object]:
+    measured_at_to = to_utc(now or _now_utc())
+    period_start = floor_to_hour(measured_at_to)
+    racks = await rack_repo.list_racks(session)
+    devices = await device_repo.list_devices(session)
+    ilo_by_device = await ilo_repo.list_latest_power_samples_by_device(
+        session,
+        measured_at_to,
+    )
+    manual_device_by_device = await measurement_repo.list_latest_manual_device_power_by_device(
+        session,
+        measured_at_to,
+    )
+    rack_measurements_by_rack = await measurement_repo.list_latest_rack_measurements_by_rack(
+        session,
+        measured_at_to,
+    )
+    phase_main_by_phase = await measurement_repo.list_latest_phase_main_measurements_by_phase(
+        session,
+        measured_at_to,
+    )
+
+    results = build_representative_power_results(
+        now=measured_at_to,
+        racks=racks,
+        devices=devices,
+        ilo_by_device=ilo_by_device,
+        manual_device_by_device=manual_device_by_device,
+        rack_measurements_by_rack=rack_measurements_by_rack,
+        phase_main_by_phase=phase_main_by_phase,
+        phase_basis=phase_basis,
+        overall_basis=overall_basis,
+    )
+    rows = build_hourly_power_aggregate_rows(period_start=period_start, results=results)
+    upserted_count = 0
+    for row in rows:
+        await aggregate_repo.upsert_power_aggregate(
+            session,
+            _with_timestamps(row.model_dump(), create=True),
+        )
+        upserted_count += 1
+    await session.commit()
+    return {
+        "status": "success",
+        "period": "hour",
+        "period_start": period_start,
+        "upserted_count": upserted_count,
+        "unknown_count": sum(result.unknown_count for result in results),
+        "stale_count": sum(result.stale_count + (1 if result.stale else 0) for result in results),
+        "skipped_count": sum(result.skipped_count for result in results),
+    }

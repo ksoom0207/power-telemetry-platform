@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import ilo_collection
+from app.services import thresholds as threshold_service
 
 
 async def run_ilo_collect_job(session: AsyncSession) -> dict[str, object]:
@@ -17,9 +18,8 @@ async def run_kwh_job(_session: AsyncSession) -> dict[str, object]:
     return {"status": "skipped", "reason": "kWh calculation pending Task 7.2"}
 
 
-async def run_threshold_evaluation_job(_session: AsyncSession) -> dict[str, object]:
-    # TODO(Task 7.2): resolve threshold basis values and persist hysteresis state updates.
-    return {"status": "skipped", "reason": "threshold evaluation pending Task 7.2"}
+async def run_threshold_evaluation_job(session: AsyncSession) -> dict[str, object]:
+    return await threshold_service.evaluate_active_thresholds(session)
 
 
 async def run_recalculation_job(_session: AsyncSession) -> dict[str, object]:

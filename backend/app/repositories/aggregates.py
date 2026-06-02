@@ -2,11 +2,12 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationAppError
+from app.models.inventory import Rack
 from app.models.power import PowerAggregate
 
 AGGREGATE_CONFLICT_COLUMNS = [
@@ -78,6 +79,43 @@ async def list_power_aggregates(
     statement = statement.order_by(PowerAggregate.period_start.desc()).limit(limit)
     result = await session.execute(statement)
     return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+async def list_latest_power_aggregates(
+    session: AsyncSession,
+    *,
+    period: str = "hour",
+    period_start_to: datetime,
+    limit: int | None = 1000,
+) -> list[dict[str, Any]]:
+    statement = (
+        select(PowerAggregate, Rack.phase)
+        .outerjoin(
+            Rack,
+            and_(PowerAggregate.entity_type == "rack", PowerAggregate.entity_id == Rack.id),
+        )
+        .where(PowerAggregate.period == period)
+        .where(PowerAggregate.period_start <= period_start_to)
+        .order_by(PowerAggregate.period_start.desc())
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    result = await session.execute(statement)
+    rows = []
+    for aggregate, phase in result.all():
+        row = _row_to_dict(aggregate)
+        if phase is not None:
+            row["phase"] = phase
+        rows.append(row)
+    latest: dict[tuple[str, int | None, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row["entity_type"]),
+            row["entity_id"],
+            str(row["source_type"]),
+        )
+        latest.setdefault(key, row)
+    return list(latest.values())
 
 
 async def upsert_power_aggregates(

@@ -23,6 +23,9 @@ class FakeThresholdRepo:
         self.created: dict[str, object] | None = None
         self.updated: tuple[int, dict[str, object]] | None = None
         self.state: dict[str, object] | None = None
+        self.state_by_threshold: dict[int, dict[str, object]] = {}
+        self.upserted_states: list[dict[str, object]] = []
+        self.list_limit: int | None | object = object()
         self.threshold: dict[str, object] = {
             "id": 1,
             "target_type": "rack",
@@ -53,6 +56,35 @@ class FakeThresholdRepo:
     async def get_threshold(self, _session: object, threshold_id: int) -> dict[str, object]:
         return {**self.threshold, "id": threshold_id}
 
+    async def list_thresholds(
+        self,
+        _session: object,
+        *,
+        active: bool | None = True,
+        target_type: str | None = None,
+        target_id: int | None = None,
+        limit: int | None = 100,
+    ) -> list[dict[str, object]]:
+        self.list_limit = limit
+        rows = [self.threshold]
+        if active is not None:
+            rows = [row for row in rows if row["active"] is active]
+        if target_type is not None:
+            rows = [row for row in rows if row["target_type"] == target_type]
+        if target_id is not None:
+            rows = [row for row in rows if row["target_id"] == target_id]
+        if limit is not None:
+            rows = rows[:limit]
+        return [{**row} for row in rows]
+
+    async def get_threshold_state_or_none(
+        self,
+        _session: object,
+        threshold_id: int,
+    ) -> dict[str, object] | None:
+        state = self.state_by_threshold.get(threshold_id)
+        return None if state is None else {**state}
+
     async def deactivate_threshold(
         self,
         _session: object,
@@ -68,7 +100,32 @@ class FakeThresholdRepo:
         self, _session: object, values: dict[str, object]
     ) -> dict[str, object]:
         self.state = values
+        self.upserted_states.append(values)
         return values
+
+
+class FakeAggregateRepo:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+        self.list_limit: int | None | object = object()
+
+    async def list_latest_power_aggregates(
+        self,
+        _session: object,
+        *,
+        period: str = "hour",
+        period_start_to: datetime,
+        limit: int | None = 1000,
+    ) -> list[dict[str, object]]:
+        self.list_limit = limit
+        rows = [
+            {**row}
+            for row in self.rows
+            if row["period"] == period and row["period_start"] <= period_start_to
+        ]
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
 
 
 @pytest.mark.asyncio
@@ -205,3 +262,76 @@ async def test_threshold_state_upsert_rejects_naive_evaluated_at(
         )
 
     assert fake_repo.state is None
+
+
+@pytest.mark.asyncio
+async def test_scheduled_threshold_evaluation_continues_existing_hysteresis_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluated_at = datetime(2026, 5, 1, 12, tzinfo=UTC)
+    threshold_repo = FakeThresholdRepo()
+    threshold_repo.threshold = {
+        **threshold_repo.threshold,
+        "id": 7,
+        "warning_watts": Decimal("100"),
+        "critical_watts": Decimal("200"),
+        "trigger_count": 2,
+        "clear_count": 2,
+    }
+    threshold_repo.state_by_threshold[7] = {
+        "threshold_id": 7,
+        "current_state": "normal",
+        "consecutive_trigger_count": 1,
+        "consecutive_clear_count": 0,
+        "last_evaluated_at": datetime(2026, 5, 1, 11, tzinfo=UTC),
+    }
+    aggregate_repo = FakeAggregateRepo(
+        [
+            {
+                "entity_type": "rack",
+                "entity_id": 1,
+                "source_type": "representative",
+                "period": "hour",
+                "period_start": evaluated_at,
+                "avg_watts": Decimal("150"),
+                "min_watts": Decimal("150"),
+                "max_watts": Decimal("150"),
+                "sample_count": 1,
+                "coverage_percent": Decimal("100"),
+                "unknown_count": 0,
+                "stale_count": 0,
+            }
+        ]
+    )
+    monkeypatch.setattr(threshold_service, "threshold_repo", threshold_repo)
+    monkeypatch.setattr(threshold_service, "aggregate_repo", aggregate_repo)
+
+    result = await threshold_service.evaluate_active_thresholds(
+        FakeSession(),
+        evaluated_at=evaluated_at,
+    )
+
+    assert result == {"status": "success", "processed_count": 1, "skipped_count": 0}
+    assert threshold_repo.upserted_states[0]["current_state"] == "warning"
+    assert threshold_repo.upserted_states[0]["consecutive_trigger_count"] == 2
+    assert threshold_repo.upserted_states[0]["last_evaluated_at"] == evaluated_at
+    assert threshold_repo.list_limit is None
+    assert aggregate_repo.list_limit is None
+
+
+@pytest.mark.asyncio
+async def test_scheduled_threshold_evaluation_skips_missing_basis_without_upsert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    threshold_repo = FakeThresholdRepo()
+    aggregate_repo = FakeAggregateRepo([])
+    monkeypatch.setattr(threshold_service, "threshold_repo", threshold_repo)
+    monkeypatch.setattr(threshold_service, "aggregate_repo", aggregate_repo)
+
+    result = await threshold_service.evaluate_active_thresholds(
+        FakeSession(),
+        evaluated_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
+    )
+
+    assert result == {"status": "success", "processed_count": 0, "skipped_count": 1}
+    assert threshold_repo.upserted_states == []

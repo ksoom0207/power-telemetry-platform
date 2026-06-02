@@ -18,7 +18,7 @@ async def list_thresholds(
     active: bool | None = True,
     target_type: str | None = None,
     target_id: int | None = None,
-    limit: int = 100,
+    limit: int | None = 100,
 ) -> list[dict[str, Any]]:
     statement: Select[tuple[Threshold]] = select(Threshold)
     if active is not None:
@@ -27,7 +27,9 @@ async def list_thresholds(
         statement = statement.where(Threshold.target_type == target_type)
     if target_id is not None:
         statement = statement.where(Threshold.target_id == target_id)
-    statement = statement.order_by(Threshold.id).limit(limit)
+    statement = statement.order_by(Threshold.id)
+    if limit is not None:
+        statement = statement.limit(limit)
     result = await session.execute(statement)
     return [_row_to_dict(row) for row in result.scalars().all()]
 
@@ -89,6 +91,17 @@ async def get_threshold_state(session: AsyncSession, threshold_id: int) -> dict[
     if row is None:
         raise ValidationAppError("threshold state not found", {"threshold_id": threshold_id})
     return _row_to_dict(row)
+
+
+async def get_threshold_state_or_none(
+    session: AsyncSession,
+    threshold_id: int,
+) -> dict[str, Any] | None:
+    result = await session.execute(
+        select(ThresholdState).where(ThresholdState.threshold_id == threshold_id)
+    )
+    row = result.scalar_one_or_none()
+    return None if row is None else _row_to_dict(row)
 
 
 def build_upsert_threshold_state_statement(values: dict[str, object]) -> Any:
